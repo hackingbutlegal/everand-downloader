@@ -1,4 +1,5 @@
 from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError
 from PyPDF2 import PdfMerger
 
 import os
@@ -10,6 +11,9 @@ import shutil
 ZOOM = 0.625
 
 book_url = sys.argv[1]
+
+consecutive_failures = 0
+max_failures = 3  # Adjust this value if needed
 
 # create cache dir
 book_filename = book_url.split('/')[5]
@@ -24,7 +28,7 @@ with sync_playwright() as playwright:
 	context = browser.new_context(storage_state="session.json" if 'session.json' in os.listdir('.') else None)
 
 	page = context.new_page()
-	page.goto('https://www.scribd.com/login', wait_until='domcontentloaded')
+	page.goto('https://www.everand.com/login', wait_until='domcontentloaded')
 
 	page.locator("div.user_row").wait_for(state='attached', timeout=0)
 
@@ -129,10 +133,31 @@ with sync_playwright() as playwright:
 		if chapter_no == num_of_chapters:
 			break
 
-		page.evaluate("() => document.querySelectorAll('button.load_next_btn')[0].click()")
+		try:
+			# Try to click the "load_next_btn"
+			next_button = page.locator('button.load_next_btn')
+			if next_button.count() > 0:
+				next_button.first.click(timeout=10000)  # Increased timeout to 10 seconds
+				time.sleep(2)  # Increased wait time
+				chapter_no += 1
+				consecutive_failures = 0  # Reset failure count on success
+			else:
+				consecutive_failures += 1
+				if consecutive_failures >= max_failures:
+					print(f"Could not find 'load_next_btn' for {max_failures} consecutive attempts. Assuming end of book.")
+					break
+				else:
+					print(f"Could not find 'load_next_btn' after chapter {chapter_no}. Retrying...")
+					time.sleep(2)  # Wait before retrying
+		except TimeoutError:
+			consecutive_failures += 1
+			if consecutive_failures >= max_failures:
+				print(f"Timeout error occurred {max_failures} consecutive times. Assuming end of book.")
+				break
+			else:
+				print(f"Timeout error occurred after chapter {chapter_no}. Retrying...")
+				time.sleep(2)  # Wait before retrying
 
-		time.sleep(1)
-		chapter_no += 1
 
 print('Merging PDF pages...')
 merger = PdfMerger()
